@@ -1,0 +1,93 @@
+/* shadcn/ui (zinc, dark) skin for the existing HemoScan app.py markup. */
+.stApp{
+  --background:#09090b; --foreground:#fafafa; --card:#09090b;
+  --muted-foreground:#a1a1aa; --border:#27272a; --accent:#27272a;
+  --primary:#fafafa; --primary-foreground:#18181b; --ring:#d4d4d8; --radius:.5rem;
+  background:var(--background)!important; color:var(--foreground);
+  font-family:Inter,ui-sans-serif,system-ui,sans-serif;
+}
+.stApp .block-container{max-width:1200px!important;padding:2.5rem 1.5rem 4rem!important}
+.stApp header[data-testid="stHeader"]{background:transparent!important}
+.stApp hr{border-color:var(--border)!important}
+
+/* ---- Hero = Card ---- */
+.stApp .hero{
+  background:var(--card)!important; border:1px solid var(--border)!important;
+  border-radius:12px!important; box-shadow:0 1px 2px rgba(0,0,0,.4)!important;
+  padding:1.75rem 1.75rem!important; margin-bottom:1rem!important;
+}
+.stApp .hero .eyebrow{
+  display:inline-block; border:1px solid var(--border); border-radius:9999px;
+  padding:.125rem .625rem; font-size:.75rem!important; font-weight:600!important;
+  letter-spacing:0!important; text-transform:none!important; color:var(--foreground)!important;
+}
+.stApp .hero h1{
+  font-size:1.875rem!important; font-weight:700!important; letter-spacing:-.03em!important;
+  line-height:1.15!important; margin:.75rem 0 .5rem!important; padding:0!important; color:var(--foreground)!important;
+}
+.stApp .hero p{color:var(--muted-foreground)!important;font-size:1rem!important;line-height:1.6!important;max-width:44rem}
+
+/* ---- Section title ---- */
+.stApp .section-title{font-size:1.125rem!important;font-weight:600!important;letter-spacing:-.02em!important;margin:1.5rem 0 .75rem!important}
+
+/* ---- Metric = Card ---- */
+.stApp .metric-card{
+  background:var(--card)!important; border:1px solid var(--border)!important;
+  border-radius:12px!important; box-shadow:0 1px 2px rgba(0,0,0,.4)!important;
+  padding:1.25rem 1.5rem!important; min-height:0!important;
+}
+.stApp .metric-label{font-size:.875rem!important;font-weight:500!important;color:var(--muted-foreground)!important;margin-bottom:.5rem!important}
+.stApp .metric-value{font-size:1.875rem!important;font-weight:700!important;letter-spacing:-.03em!important;line-height:1!important}
+.stApp .metric-note{font-size:.75rem!important;color:var(--muted-foreground)!important;margin-top:.5rem!important}
+
+/* ---- Panel = Card ---- */
+.stApp .panel{
+  background:var(--card)!important; border:1px solid var(--border)!important;
+  border-radius:12px!important; box-shadow:0 1px 2px rgba(0,0,0,.4)!important;
+  padding:1.25rem 1.5rem!important; font-size:.875rem; line-height:1.6;
+}
+.stApp .panel strong{font-weight:600}
+.stApp .panel hr{margin:.75rem 0!important}
+.stApp .small-muted{color:var(--muted-foreground)!important;font-size:.8125rem!important}
+
+/* ---- Notice = Alert ---- */
+.stApp .notice{
+  background:var(--card)!important; border:1px solid rgba(245,158,11,.4)!important;
+  border-radius:var(--radius)!important; color:var(--muted-foreground)!important;
+  padding:1rem!important; font-size:.875rem!important; line-height:1.5;
+}
+.stApp .notice strong{color:#fbbf24!important;font-weight:500}
+
+/* ---- Inputs ---- */
+.stApp label,.stApp [data-testid="stWidgetLabel"] p{font-size:.875rem!important;font-weight:500!important;color:var(--foreground)!important}
+.stApp [data-baseweb="input"],.stApp [data-baseweb="base-input"]{
+  background:transparent!important; border-radius:var(--radius)!important; color:var(--foreground)!important}
+.stApp [data-baseweb="input"]{border:1px solid var(--border)!important;min-height:2.25rem}
+.stApp [data-baseweb="input"]:focus-within{border-color:var(--ring)!important;box-shadow:0 0 0 3px rgba(212,212,216,.18)!important}
+.stApp div[data-testid="stFileUploader"]{border:0!important;padding:0!important;background:transparent!important}
+.stApp div[data-testid="stFileUploader"] section{
+  background:var(--card)!important;border:1px dashed #3f3f46!important;
+  border-radius:12px!important;padding:1.5rem!important}
+.stApp div[data-testid="stFileUploader"] section:hover{border-color:var(--muted-foreground)!important}
+
+/* ---- Buttons ---- */
+.stApp .stButton>button,.stApp .stDownloadButton>button{
+  border-radius:var(--radius)!important;font-size:.875rem!important;font-weight:500!important;
+  min-height:2.5rem!important;transition:background .15s,opacity .15s}
+.stApp button[kind="primary"],.stApp [data-testid="stBaseButton-primary"]{
+  background:var(--primary)!important;color:var(--primary-foreground)!important;border:1px solid var(--primary)!important}
+.stApp button[kind="primary"] p,.stApp [data-testid="stBaseButton-primary"] p{color:var(--primary-foreground)!important}
+.stApp button[kind="primary"]:hover,.stApp [data-testid="stBaseButton-primary"]:hover{opacity:.9}
+.stApp button[kind="primary"]:disabled,.stApp [data-testid="stBaseButton-primary"]:disabled{opacity:.5}
+.stApp button[kind="secondary"],.stApp [data-testid="stBaseButton-secondary"]{
+  background:transparent!important;color:var(--foreground)!important;border:1px solid var(--border)!important}
+.stApp button[kind="secondary"]:hover,.stApp [data-testid="stBaseButton-secondary"]:hover{background:var(--accent)!important}
+
+/* ---- Alerts, tables, images ---- */
+.stApp div[data-testid="stAlert"]{
+  background:var(--card)!important;border:1px solid var(--border)!important;
+  border-radius:var(--radius)!important;color:var(--foreground)!important}
+.stApp div[data-testid="stDataFrame"]{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.stApp div[data-testid="stImage"] img{border-radius:var(--radius);border:1px solid var(--border)}
+.stApp div[data-testid="stExpander"]{border:1px solid var(--border)!important;border-radius:var(--radius)!important}
+.stApp [data-testid="stCaptionContainer"]{color:var(--muted-foreground)}
