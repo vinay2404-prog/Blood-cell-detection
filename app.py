@@ -629,13 +629,16 @@ def predict():
             ),
         })
 
-    except Exception:
-        app.logger.exception("Image analysis failed")
+        except Exception as e:
+        import traceback
+
+        print("========== IMAGE ANALYSIS FAILED ==========", flush=True)
+        print(f"Error: {repr(e)}", flush=True)
+        traceback.print_exc()
+
         return jsonify({
-            "error": (
-                "Image analysis failed. Check the server logs and model "
-                "configuration, then try again."
-            )
+            "error": "Image analysis failed",
+            "details": str(e)
         }), 500
 
 
