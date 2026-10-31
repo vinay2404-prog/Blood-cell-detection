@@ -1,6 +1,6 @@
 streamlit
 ultralytics==8.4.187
-opencv-python-headless==4.11.0.86
+opencv-python==4.11.0.86
 numpy
 matplotlib
 reportlab
