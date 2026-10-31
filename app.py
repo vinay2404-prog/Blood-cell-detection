@@ -44,67 +44,8 @@ COLORS = {
     "RBC": (69, 53, 220),
     "WBC": (255, 144, 30),
 }
-DISPLAY_COLORS = {
-    "Platelets": "#00B7D9",
-    "RBC": "#DC3545",
-    "WBC": "#F59E0B",
-}
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hemoscan")
-
-
-# =========================================================
-# UI THEME
-# =========================================================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-:root {
-  --bg: #09090b; --surface: #111113; --surface2: #18181b;
-  --border: #27272a; --text: #fafafa; --muted: #a1a1aa;
-}
-html, body, [class*="css"] { font-family: Inter, sans-serif; }
-.stApp { background: var(--bg); color: var(--text); }
-.block-container { max-width: 1450px; padding-top: 2rem; padding-bottom: 3rem; }
-header[data-testid="stHeader"] { background: rgba(9,9,11,.85); }
-section[data-testid="stSidebar"] { display: none; }
-.hero {
-  border: 1px solid var(--border); border-radius: 22px; padding: 28px 30px;
-  background: radial-gradient(circle at 90% 10%, rgba(34,197,94,.12), transparent 30%), #111113;
-  margin-bottom: 22px;
-}
-.eyebrow { color: #4ade80; font-size: .78rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-.hero h1 { color: #fafafa; font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.1; margin: 10px 0; }
-.hero p { color: #a1a1aa; max-width: 780px; margin-bottom: 0; }
-.section-title { font-size: 1.15rem; font-weight: 700; margin: 1rem 0 .8rem; }
-.metric-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-  padding: 18px 20px; min-height: 112px;
-}
-.metric-label { color: #a1a1aa; font-size: .85rem; margin-bottom: 10px; }
-.metric-value { color: #fafafa; font-size: 2rem; font-weight: 800; line-height: 1.1; }
-.metric-note { color: #71717a; font-size: .78rem; margin-top: 8px; }
-.panel {
-  background: #111113; border: 1px solid #27272a; border-radius: 16px;
-  padding: 18px; margin-bottom: 12px;
-}
-.small-muted { color: #a1a1aa; font-size: .88rem; }
-.notice {
-  background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3);
-  color: #fcd34d; border-radius: 12px; padding: 13px 15px; font-size: .88rem;
-}
-div[data-testid="stFileUploader"] {
-  border: 1px dashed #3f3f46; border-radius: 14px; padding: 10px;
-  background: #111113;
-}
-.stButton > button, .stDownloadButton > button {
-  border-radius: 10px; font-weight: 600; min-height: 2.8rem;
-}
-hr { border-color: #27272a; }
-footer { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
 
 
 # =========================================================
@@ -447,58 +388,66 @@ def generate_pdf(analysis: dict) -> bytes:
 # =========================================================
 # HEADER
 # =========================================================
-st.markdown("""
-<div class="hero">
-  <div class="eyebrow">AI-powered microscopy • Research prototype</div>
-  <h1>HemoScan AI</h1>
-  <p>Blood smear image analysis with YOLO-powered cell detection, image-quality indicators,
-  confidence summaries, and downloadable laboratory-style reports.</p>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown(
-    '<div class="notice"><strong>Research use only.</strong> This tool counts model detections '
-    'in a submitted image. It is not a validated CBC test and must not be used alone for diagnosis '
-    'or treatment decisions.</div>',
-    unsafe_allow_html=True,
+st.title("🧬 HemoScan AI")
+st.subheader("Blood Smear Image Analyzer")
+st.write(
+    "Blood smear image analysis using YOLO-based cell detection, "
+    "image-quality indicators, confidence summaries, and downloadable reports."
 )
-st.write("")
-
+st.warning(
+    "Research use only. This tool counts model detections in an uploaded image. "
+    "It is not a validated CBC test and must not be used alone for diagnosis "
+    "or treatment decisions."
+)
 
 # =========================================================
 # UPLOAD + RUN
 # =========================================================
+st.header("1. Upload specimen image")
 left, right = st.columns([1.05, 0.95], gap="large")
 
 with left:
-    st.markdown('<div class="section-title">01 / Upload specimen image</div>', unsafe_allow_html=True)
-    sample_id = st.text_input("Sample ID (optional)", placeholder="e.g. SAMPLE-001", max_chars=80)
+    sample_id = st.text_input(
+        "Sample ID (optional)",
+        placeholder="e.g. SAMPLE-001",
+        max_chars=80,
+    )
     uploaded_file = st.file_uploader(
         "Choose a blood smear image",
         type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"],
         help="Maximum file size: 15 MB. Use a clear microscopy image.",
     )
+
     if uploaded_file is not None:
         if uploaded_file.size > MAX_UPLOAD_SIZE:
             st.error("Image is too large. Maximum upload size is 15 MB.")
             uploaded_file = None
         else:
-            st.image(uploaded_file, caption="Uploaded image preview", use_container_width=True)
+            st.image(
+                uploaded_file,
+                caption="Uploaded image preview",
+                use_container_width=True,
+            )
 
-    run_analysis = st.button("Run cell detection", type="primary", use_container_width=True, disabled=uploaded_file is None)
+    run_analysis = st.button(
+        "Run cell detection",
+        type="primary",
+        use_container_width=True,
+        disabled=uploaded_file is None,
+    )
 
 with right:
-    st.markdown('<div class="section-title">02 / Analysis workflow</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="panel">
-      <strong>01 — Image validation</strong><br><span class="small-muted">Decode image and check basic technical quality.</span><br><br>
-      <strong>02 — YOLO inference</strong><br><span class="small-muted">Detect the model's Platelets, RBC, and WBC classes.</span><br><br>
-      <strong>03 — Results & report</strong><br><span class="small-muted">Review annotated image, counts, confidence, quality checks, and PDF.</span>
-    </div>
-    """, unsafe_allow_html=True)
+    st.subheader("Analysis workflow")
+    st.markdown(
+        """
+        1. **Image validation** — Decode the image and check basic technical quality.
+        2. **YOLO inference** — Detect Platelets, RBC, and WBC classes.
+        3. **Results and report** — Review the annotated image, counts, confidence,
+           quality checks, and downloadable PDF.
+        """
+    )
     st.caption("Model: runs/detect/train/weights/best.pt")
-    st.caption("Maximum upload: 15 MB")
-
+    st.caption("Maximum upload size: 15 MB")
 
 if run_analysis and uploaded_file is not None:
     try:
@@ -508,6 +457,7 @@ if run_analysis and uploaded_file is not None:
         else:
             encoded = np.frombuffer(raw_bytes, np.uint8)
             image_bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+
             if image_bgr is None or image_bgr.size == 0:
                 st.error("Invalid or unsupported image. Please upload a valid image.")
             else:
@@ -516,26 +466,29 @@ if run_analysis and uploaded_file is not None:
                     result_data = analyze_image(yolo_model, image_bgr, sample_id)
                     st.session_state["hemoscan_latest"] = result_data
                     st.session_state["hemoscan_pdf"] = generate_pdf(result_data)
+
                 st.success("Analysis completed. Review the model-generated results below.")
+
     except FileNotFoundError as exc:
         st.error(str(exc))
     except Exception as exc:
         logger.exception("Image analysis failed")
-        st.error("Image analysis failed. Check that the model file and dependencies are correct.")
+        st.error(
+            "Image analysis failed. Check that the model file and dependencies are correct."
+        )
         with st.expander("Technical error details"):
             st.code(str(exc))
-
 
 # =========================================================
 # RESULTS
 # =========================================================
 analysis = st.session_state.get("hemoscan_latest")
+
 if analysis:
     st.divider()
-    st.markdown('<div class="section-title">03 / Detection overview</div>', unsafe_allow_html=True)
+    st.header("2. Detection overview")
 
     counts = analysis["counts"]
-    metrics = st.columns(5, gap="medium")
     metric_items = [
         ("Total detections", analysis["total_detections"], "All supported classes"),
         ("Red blood cells", counts.get("RBC", 0), "RBC detections"),
@@ -543,95 +496,146 @@ if analysis:
         ("Platelets", counts.get("Platelets", 0), "Platelet detections"),
         ("Mean confidence", f'{analysis["mean_confidence"]:.1f}%', "Not diagnostic accuracy"),
     ]
-    for col, (label, value, note) in zip(metrics, metric_items):
-        with col:
-            st.markdown(
-                f'<div class="metric-card"><div class="metric-label">{label}</div>'
-                f'<div class="metric-value">{value}</div><div class="metric-note">{note}</div></div>',
-                unsafe_allow_html=True,
-            )
 
-    st.write("")
-    img_col, quality_col = st.columns([1.25, 0.75], gap="large")
-    with img_col:
-        st.markdown('<div class="section-title">Annotated detection image</div>', unsafe_allow_html=True)
-        st.image(analysis["processed_rgb"], use_container_width=True)
+    metric_columns = st.columns(5)
+    for column, (label, value, help_text) in zip(metric_columns, metric_items):
+        with column:
+            st.metric(label, value, help=help_text)
+
+    st.divider()
+    st.header("3. Annotated image and image quality")
+
+    image_col, quality_col = st.columns([1.25, 0.75], gap="large")
+
+    with image_col:
+        st.subheader("Annotated detection image")
+        st.image(
+            analysis["processed_rgb"],
+            caption="Model-generated cell detections",
+            use_container_width=True,
+        )
+
         image_bytes = BytesIO()
         plt.imsave(image_bytes, analysis["processed_rgb"], format="png")
         st.download_button(
             "Download annotated image",
             data=image_bytes.getvalue(),
-            file_name=f"hemoscan_{analysis['analysis_id']}.png",
+            file_name=f'hemoscan_{analysis["analysis_id"]}.png',
             mime="image/png",
         )
 
     with quality_col:
-        st.markdown('<div class="section-title">Image quality review</div>', unsafe_allow_html=True)
+        st.subheader("Image quality review")
         quality = analysis["image_quality"]
-        st.markdown(
-            f'<div class="panel"><div class="metric-label">Quality indicator</div>'
-            f'<strong>{quality["status"]}</strong><hr>'
-            f'<span class="small-muted">Dimensions</span><br><strong>{quality["width"]} × {quality["height"]} px</strong><br><br>'
-            f'<span class="small-muted">Blur indicator</span><br><strong>{quality["blur_score"]}</strong><br><br>'
-            f'<span class="small-muted">Brightness / contrast</span><br>'
-            f'<strong>{quality["brightness"]} / {quality["contrast"]}</strong></div>',
-            unsafe_allow_html=True,
-        )
-        if quality["warnings"]:
-            for warning in quality["warnings"]:
-                st.warning(warning)
-        else:
-            st.info("No warnings triggered by the configured basic checks. This does not establish clinical quality.")
 
-    st.markdown('<div class="section-title">Cell distribution</div>', unsafe_allow_html=True)
+        st.metric("Quality indicator", quality["status"])
+        st.write(f'**Dimensions:** {quality["width"]} × {quality["height"]} pixels')
+        st.write(f'**Blur indicator:** {quality["blur_score"]}')
+        st.write(f'**Brightness:** {quality["brightness"]}')
+        st.write(f'**Contrast:** {quality["contrast"]}')
+
+        if quality["warnings"]:
+            st.warning("Image-quality warnings")
+            for warning in quality["warnings"]:
+                st.write(f"- {warning}")
+        else:
+            st.info(
+                "No warnings were triggered by the configured basic checks. "
+                "This does not establish clinical quality."
+            )
+
+    st.divider()
+    st.header("4. Cell distribution")
+
     chart_col, table_col = st.columns([1, 1], gap="large")
+
     with chart_col:
         fig, ax = plt.subplots(figsize=(7, 3.5))
         names = ["RBC", "WBC", "Platelets"]
-        vals = [counts.get(name, 0) for name in names]
-        chart_cols = [np.array(COLORS[name][::-1]) / 255.0 for name in names]
-        bars = ax.bar(names, vals, color=chart_cols, edgecolor="white", linewidth=.8)
+        values = [counts.get(name, 0) for name in names]
+        chart_colors = [
+            np.array(COLORS[name][::-1]) / 255.0
+            for name in names
+        ]
+
+        bars = ax.bar(
+            names,
+            values,
+            color=chart_colors,
+            edgecolor="white",
+            linewidth=0.8,
+        )
         ax.set_ylabel("Detections")
-        ax.grid(axis="y", linestyle="--", alpha=.25)
+        ax.grid(axis="y", linestyle="--", alpha=0.25)
         ax.set_axisbelow(True)
-        for bar, value in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), str(value),
-                    ha="center", va="bottom")
+
+        for bar, value in zip(bars, values):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                str(value),
+                ha="center",
+                va="bottom",
+            )
+
         fig.tight_layout()
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
-    with table_col:
-        st.dataframe(
-            [{"Cell class": name, "Detections": counts.get(name, 0),
-              "Share": f'{(counts.get(name, 0) / analysis["total_detections"] * 100) if analysis["total_detections"] else 0:.1f}%'}
-             for name in ("RBC", "WBC", "Platelets")],
-            hide_index=True, use_container_width=True,
-        )
-        st.markdown(f'**Analysis ID:** `{analysis["analysis_id"]}`')
-        st.markdown(f'**Sample ID:** `{analysis["sample_id"]}`')
-        st.markdown(f'**Analyzed:** {analysis["timestamp"]}')
-        st.markdown(f'**Review status:** {analysis["review_status"]}')
 
-    st.markdown('<div class="section-title">Automated detection conclusion</div>', unsafe_allow_html=True)
-    conclusion = generate_conclusion(analysis)
-    st.markdown(f'<div class="panel"><strong>{conclusion["status"]}</strong></div>', unsafe_allow_html=True)
-    for finding in conclusion["findings"]:
-        st.write("• " + finding)
-    st.markdown("**Recommendations**")
-    for recommendation in conclusion["recommendations"]:
-        st.write("• " + recommendation)
+    with table_col:
+        detection_total = analysis["total_detections"]
+        st.dataframe(
+            [
+                {
+                    "Cell class": name,
+                    "Detections": counts.get(name, 0),
+                    "Share": (
+                        f'{counts.get(name, 0) / detection_total * 100:.1f}%'
+                        if detection_total
+                        else "0.0%"
+                    ),
+                }
+                for name in ("RBC", "WBC", "Platelets")
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.subheader("Analysis details")
+        st.write(f'**Analysis ID:** `{analysis["analysis_id"]}`')
+        st.write(f'**Sample ID:** {analysis["sample_id"]}')
+        st.write(f'**Analyzed:** {analysis["timestamp"]}')
+        st.write(f'**Review status:** {analysis["review_status"]}')
 
     st.divider()
+    st.header("5. Automated detection conclusion")
+
+    conclusion = generate_conclusion(analysis)
+    st.info(conclusion["status"])
+
+    st.subheader("Findings")
+    for finding in conclusion["findings"]:
+        st.write(f"- {finding}")
+
+    st.subheader("Recommendations")
+    for recommendation in conclusion["recommendations"]:
+        st.write(f"- {recommendation}")
+
+    st.divider()
+    st.header("6. Download report")
+
     pdf_bytes = st.session_state.get("hemoscan_pdf")
     if pdf_bytes:
         st.download_button(
             "Download laboratory-style PDF report",
             data=pdf_bytes,
-            file_name=f"hemoscan_report_{analysis['analysis_id']}.pdf",
+            file_name=f'hemoscan_report_{analysis["analysis_id"]}.pdf',
             mime="application/pdf",
             type="primary",
             use_container_width=True,
         )
 
-st.markdown("<br><hr>", unsafe_allow_html=True)
-st.caption("HemoScan AI • AI-assisted blood smear research prototype • Human review required")
+st.divider()
+st.caption(
+    "HemoScan AI • AI-assisted blood smear research prototype • Human review required"
+)
