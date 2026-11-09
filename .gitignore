@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Streamlit / generated outputs
+static/output/
+evaluation_results/
+audit_log.jsonl
+folder_structure.txt
+
+# Large model weights (keep locally, distribute via releases)
+# runs/detect/*/weights/*.pt
+
+# OS
+.DS_Store
+Thumbs.db

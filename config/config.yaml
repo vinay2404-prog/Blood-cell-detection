@@ -1,0 +1,29 @@
+# HemoScan AI configuration
+model:
+  path: runs/detect/train/weights/best.pt
+  image_size: 640
+
+inference:
+  confidence: 0.50
+  iou: 0.70
+  max_det: 1000
+
+quality_thresholds:
+  min_side: 256
+  blur: 50.0
+  noise: 8.0
+  contrast: 35.0
+  brightness_low: 70.0
+  brightness_high: 190.0
+  target_brightness: 120.0
+
+qaps:
+  denoise: true
+  gamma: true
+  clahe: true
+
+evaluation:
+  operating_iou: 0.50
+  map_iou_start: 0.50
+  map_iou_stop: 0.96
+  map_iou_step: 0.05

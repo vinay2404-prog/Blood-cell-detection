@@ -1,641 +1,484 @@
+"""HemoScan AI - QAPS-YOLO research prototype.
+
+Streamlit interface. All scientific logic lives in `core.py` so that the app
+and the offline evaluation script share one implementation.
+"""
 from __future__ import annotations
 
-from datetime import datetime
+import json
+import logging
 from io import BytesIO
 from pathlib import Path
-import logging
 
-import cv2
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
+import pandas as pd
 import streamlit as st
-from ultralytics import YOLO
-
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image as RLImage,
-    Table, TableStyle, KeepTogether
+from reportlab.platypus import Image as RLImage
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+import core
+from core import (
+    ALGORITHM_VERSION,
+    CLASS_NAMES,
+    EXPERIMENT_VERSION,
+    MAX_UPLOAD_SIZE,
+    MODEL_PATH,
+    THRESHOLDS,
+    YOLO_CONFIG,
+    analyze_image,
+    create_distribution_chart,
+    csv_rows,
+    decode_image,
+    generate_conclusion,
+    load_model,
+    model_sha256 as core_model_sha256,
+    rows_to_csv,
+    sha256_bytes,
+    to_png,
 )
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
 st.set_page_config(
-    page_title="HemoScan AI | Blood Smear Analyzer",
+    page_title="HemoScan AI | Research Analyzer",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "runs" / "detect" / "train" / "weights" / "best.pt"
-MAX_UPLOAD_SIZE = 15 * 1024 * 1024
-
-CLASS_NAMES = {0: "Platelets", 1: "RBC", 2: "WBC"}
-# OpenCV BGR colors
-COLORS = {
-    "Platelets": (0, 215, 255),
-    "RBC": (69, 53, 220),
-    "WBC": (255, 144, 30),
-}
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("hemoscan")
+logger = logging.getLogger("HemoScan")
 
 
-# =========================================================
-# MODEL LOADING
-# =========================================================
-@st.cache_resource(show_spinner="Loading the HemoScan AI model...")
-def load_model(model_path: str):
-    path = Path(model_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Model file was not found at: {path}. "
-            "Place best.pt at runs/detect/train/weights/best.pt beside app.py."
-        )
-    return YOLO(str(path))
+@st.cache_data(show_spinner=False)
+def model_sha256(path_str: str, mtime: float) -> str:
+    return core_model_sha256(path_str, mtime)
 
 
-# =========================================================
-# IMAGE QUALITY
-# =========================================================
-def assess_image_quality(image: np.ndarray) -> dict:
-    height, width = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    brightness = float(np.mean(gray))
-    contrast = float(np.std(gray))
-    warnings = []
-
-    if width < 256 or height < 256:
-        warnings.append("Low image resolution. A higher-resolution image may be needed.")
-    if blur_score < 50:
-        warnings.append("Possible blur detected. Consider capturing a sharper image.")
-    if brightness < 45:
-        warnings.append("Image may be too dark.")
-    elif brightness > 220:
-        warnings.append("Image may be overexposed.")
-    if contrast < 20:
-        warnings.append("Low image contrast may affect detection quality.")
-
-    return {
-        "width": width, "height": height,
-        "blur_score": round(blur_score, 2),
-        "brightness": round(brightness, 2),
-        "contrast": round(contrast, 2),
-        "warnings": warnings,
-        "status": "Review recommended" if warnings else "No basic quality warning",
-    }
-
-
-# =========================================================
-# ANALYSIS / INFERENCE
-# =========================================================
-def analyze_image(model, image: np.ndarray, sample_id: str) -> dict:
-    quality = assess_image_quality(image)
-    result = model.predict(source=image, verbose=False)[0]
-    counts = {name: 0 for name in CLASS_NAMES.values()}
-    confidence_values = []
-    boxes_data = []
-    processed = image.copy()
-    height, width = processed.shape[:2]
-
-    if result.boxes is not None:
-        for box in result.boxes:
-            cls_id = int(box.cls[0].item())
-            confidence = float(box.conf[0].item())
-            if cls_id not in CLASS_NAMES:
-                logger.warning("Unknown class ID from model: %s", cls_id)
-                continue
-
-            class_name = CLASS_NAMES[cls_id]
-            counts[class_name] += 1
-            confidence_values.append(confidence * 100)
-            x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().tolist())
-            x1 = max(0, min(x1, width - 1))
-            x2 = max(0, min(x2, width - 1))
-            y1 = max(0, min(y1, height - 1))
-            y2 = max(0, min(y2, height - 1))
-            color = COLORS[class_name]
-
-            cv2.rectangle(processed, (x1, y1), (x2, y2), color, 2)
-            label = f"{class_name} {confidence * 100:.1f}%"
-            cv2.putText(
-                processed, label, (x1, max(20, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA
-            )
-            red, green, blue = color[::-1]
-            boxes_data.append({
-                "x": x1, "y": y1, "w": max(0, x2-x1), "h": max(0, y2-y1),
-                "label": class_name, "confidence": round(confidence * 100, 1),
-                "color": f"rgb({red}, {green}, {blue})",
-            })
-
-    total = sum(counts.values())
-    mean_confidence = float(np.mean(confidence_values)) if confidence_values else 0.0
-    return {
-        "analysis_id": datetime.now().strftime("%Y%m%d%H%M%S"),
-        "sample_id": sample_id.strip()[:80] or "Sample not provided",
-        "timestamp": datetime.now().astimezone().strftime("%d %b %Y, %H:%M:%S %Z"),
-        "counts": counts,
-        "boxes": boxes_data,
-        "total_detections": total,
-        "confidence_values": confidence_values,
-        "mean_confidence": round(mean_confidence, 1),
-        "image_quality": quality,
-        "review_status": "Pending human review",
-        "original_rgb": cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-        "processed_rgb": cv2.cvtColor(processed, cv2.COLOR_BGR2RGB),
-    }
-
-
-def generate_conclusion(analysis: dict) -> dict:
-    counts = analysis.get("counts", {})
-    total = analysis.get("total_detections", sum(counts.values()))
-    warnings = analysis.get("image_quality", {}).get("warnings", [])
-    findings, recommendations = [], []
-
-    if total == 0:
-        findings.append(
-            "The AI model did not detect any cells in the submitted image. "
-            "This does not mean that blood cells are absent."
-        )
-        recommendations.append(
-            "Verify that the image contains a suitable blood smear and repeat the analysis if needed."
-        )
-    else:
-        findings.append(
-            f"The AI model detected {total} objects: {counts.get('RBC', 0)} RBC, "
-            f"{counts.get('WBC', 0)} WBC, and {counts.get('Platelets', 0)} platelet detections."
-        )
-
-    if warnings:
-        findings.append(
-            f"The image-quality checks raised {len(warnings)} warning(s), which may affect detection reliability."
-        )
-        recommendations.append("Review the image-quality warnings and consider recapturing the image.")
-    else:
-        findings.append(
-            "No warnings were triggered by the configured basic image-quality checks. "
-            "This does not establish clinical quality."
-        )
-
-    if analysis.get("confidence_values"):
-        findings.append(
-            f"Mean model confidence was {analysis.get('mean_confidence', 0):.1f}%. "
-            "Confidence is not a measure of diagnostic accuracy."
-        )
-
-    recommendations.extend([
-        "Have the annotated image and detections reviewed by a qualified laboratory professional.",
-        "Do not use these image-level counts alone to diagnose a disease or determine whether a blood count is normal or abnormal.",
-    ])
-    return {
-        "title": "Automated Detection Conclusion",
-        "findings": findings,
-        "recommendations": recommendations,
-        "status": "Requires professional review",
-    }
-
-
-# =========================================================
-# CHART + PDF
-# =========================================================
-def create_chart(counts: dict) -> BytesIO:
-    labels = list(counts.keys())
-    values = list(counts.values())
-    chart_colors = [np.array(COLORS[name][::-1]) / 255.0 for name in labels]
-    fig, ax = plt.subplots(figsize=(7, 3.7))
-    bars = ax.bar(labels, values, color=chart_colors, edgecolor="white", linewidth=0.8)
-    ax.set_title("Detected Cell Distribution", fontsize=14, pad=14)
-    ax.set_ylabel("Number of detections")
-    ax.set_xlabel("Cell class")
-    ax.grid(axis="y", linestyle="--", alpha=0.25)
-    ax.set_axisbelow(True)
-    for bar, value in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), str(value),
-                ha="center", va="bottom", fontsize=10)
-    fig.tight_layout()
+def generate_pdf(a: dict, chart_png: bytes, annotated_png: bytes) -> bytes:
     buffer = BytesIO()
-    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    buffer.seek(0)
-    return buffer
-
-
-def generate_pdf(analysis: dict) -> bytes:
-    pdf_buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        pdf_buffer, pagesize=A4,
-        rightMargin=16*mm, leftMargin=16*mm,
-        topMargin=15*mm, bottomMargin=15*mm,
-    )
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=16 * mm, leftMargin=16 * mm,
+                            topMargin=15 * mm, bottomMargin=15 * mm)
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
-        name="ReportSmallCustom", parent=styles["BodyText"], fontSize=8, leading=11
-    ))
-    styles.add(ParagraphStyle(
-        name="ReportTitleCustom", parent=styles["Title"], fontSize=20, leading=24,
-        textColor=colors.HexColor("#123B63"), alignment=TA_CENTER, spaceAfter=4
-    ))
+    styles.add(ParagraphStyle(name="SmallReport", parent=styles["BodyText"], fontSize=8, leading=11))
+    styles.add(ParagraphStyle(name="CustomTitle", parent=styles["Title"], fontSize=20, leading=24,
+                              textColor=colors.HexColor("#123B63"), alignment=TA_CENTER))
     story = []
 
     def section(title):
-        story.extend([Spacer(1, 9), Paragraph(title, styles["Heading2"]), Spacer(1, 4)])
+        story.extend([Spacer(1, 10), Paragraph(title, styles["Heading2"]), Spacer(1, 5)])
 
-    def para(text, style="Normal"):
-        safe = (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    def para(value, style="Normal"):
+        safe = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         story.append(Paragraph(safe, styles[style]))
 
-    story.append(Paragraph("HEMOSCAN AI", styles["ReportTitleCustom"]))
-    story.append(Paragraph("BLOOD SMEAR IMAGE ANALYSIS REPORT", styles["Heading2"]))
-    story.append(Paragraph(
-        "AI-assisted research report • Not a diagnostic laboratory result",
-        styles["ReportSmallCustom"]
-    ))
-    story.append(Spacer(1, 12))
+    def table(rows, widths, header=False, font=None):
+        t = Table(rows, colWidths=widths, repeatRows=1 if header else 0)
+        style = [("GRID", (0, 0), (-1, -1), 0.5, colors.grey), ("PADDING", (0, 0), (-1, -1), 6),
+                 ("VALIGN", (0, 0), (-1, -1), "TOP")]
+        if header:
+            style += [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#164E78")),
+                      ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                      ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]
+        else:
+            style += [("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF2F8")),
+                      ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")]
+        if font:
+            style.append(("FONTSIZE", (0, 0), (-1, -1), font))
+        t.setStyle(TableStyle(style))
+        story.append(t)
 
-    section("1. SPECIMEN AND REPORT DETAILS")
-    metadata = [
-        ["Sample ID", analysis.get("sample_id", "Not provided")],
-        ["Analysis ID", analysis.get("analysis_id", "Not available")],
-        ["Report generated", analysis.get("timestamp", "Not available")],
-        ["AI model file", MODEL_PATH.name],
-        ["Review status", analysis.get("review_status", "Pending human review")],
-    ]
-    meta_table = Table(metadata, colWidths=[42*mm, 128*mm], hAlign="LEFT")
-    meta_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF2F8")),
-        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#1F2937")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), .45, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("PADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story.append(meta_table)
+    story.append(Paragraph("HEMOSCAN AI", styles["CustomTitle"]))
+    para("QAPS-YOLO BLOOD SMEAR RESEARCH REPORT", "Heading2")
+    para("AI-assisted experimental analysis. Not a diagnostic report.", "SmallReport")
 
-    section("2. ANNOTATED BLOOD SMEAR IMAGE")
-    img_buf = BytesIO()
-    plt.imsave(img_buf, analysis["processed_rgb"], format="png")
-    img_buf.seek(0)
-    story.append(RLImage(img_buf, width=165*mm, height=100*mm, kind="proportional"))
-    para("Detections and labels shown are model-generated and require review.", "ReportSmallCustom")
+    section("1. Experiment details")
+    table([
+        ["Sample ID", a["sample_id"]], ["Analysis ID", a["analysis_id"]],
+        ["Timestamp", a["timestamp"]], ["Model", Path(a["model_path"]).name],
+        ["Algorithm", "QAPS " + ALGORITHM_VERSION],
+        ["Experiment version", a["experiment_version"]],
+        ["Review status", a["review_status"]],
+        ["YOLO config", json.dumps(a["yolo_config"])],
+        ["Image SHA-256", a["image_hash"]], ["Model SHA-256", a["model_hash"]],
+    ], [45 * mm, 125 * mm], font=7)
 
-    section("3. DETECTION SUMMARY")
-    counts = analysis["counts"]
-    total = analysis["total_detections"]
-    rows = [["Cell class", "Detected objects", "Share of detections"]]
-    for name in ("RBC", "WBC", "Platelets"):
-        count = int(counts.get(name, 0))
-        rows.append([name, str(count), f"{(count/total*100) if total else 0:.1f}%"])
-    rows.append(["TOTAL", str(total), "100.0%" if total else "0.0%"])
-    count_table = Table(rows, colWidths=[70*mm, 45*mm, 55*mm], repeatRows=1)
-    count_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#164E78")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAF2F8")),
-        ("GRID", (0, 0), (-1, -1), .45, colors.HexColor("#CBD5E1")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F8FAFC")]),
-        ("ALIGN", (1, 1), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story.append(count_table)
+    section("2. QAPS-YOLO annotated image")
+    story.append(RLImage(BytesIO(annotated_png), width=165 * mm, height=100 * mm, kind="proportional"))
 
-    section("4. MODEL CONFIDENCE")
-    if analysis["confidence_values"]:
-        para(f"Mean model confidence: {analysis['mean_confidence']:.1f}%")
-        para("Confidence is the model's score for its detections; it is not diagnostic accuracy.", "ReportSmallCustom")
-    else:
-        para("No objects were detected by the model. This does not prove that blood cells are absent.")
+    section("3. Baseline vs QAPS experimental comparison")
+    b, q, cmp_ = a["baseline"], a["qaps"], a["comparison"]
+    rows = [["Metric", "Baseline YOLO", "QAPS-YOLO"],
+            ["Total detections", b["total_detections"], q["total_detections"]],
+            ["Mean confidence", f"{b['mean_confidence']:.2f}%", f"{q['mean_confidence']:.2f}%"],
+            ["Inference time", f"{b['inference_time']:.5f} s", f"{q['inference_time']:.5f} s"]]
+    rows += [[n, b["counts"][n], q["counts"][n]] for n in CLASS_NAMES.values()]
+    table(rows, [60 * mm, 55 * mm, 55 * mm], header=True)
+    para(f"Detection-count difference: {cmp_['detection_change']:+d}")
+    para(f"Mean-confidence difference: {cmp_['confidence_change']:+.2f} percentage points")
+    para("Note: count and confidence differences do not establish improved detection accuracy.")
 
-    section("5. IMAGE QUALITY REVIEW")
-    quality = analysis["image_quality"]
-    for line in [
-        f"Image dimensions: {quality['width']} × {quality['height']} pixels",
-        f"Blur indicator (Laplacian variance): {quality['blur_score']}",
-        f"Mean brightness: {quality['brightness']}",
-        f"Contrast indicator: {quality['contrast']}",
-        f"Quality status: {quality['status']}",
-    ]:
-        para(line, "ReportSmallCustom")
-    if quality["warnings"]:
-        para("Quality warnings:", "Heading3")
-        for warning in quality["warnings"]:
-            para("• " + warning, "ReportSmallCustom")
-    else:
-        para("No warnings were triggered by the configured basic image-quality checks. This does not establish clinical quality.", "ReportSmallCustom")
+    section("4. Detection distribution comparison")
+    story.append(RLImage(BytesIO(chart_png), width=150 * mm, height=80 * mm, kind="proportional"))
 
-    section("6. CELL DISTRIBUTION CHART")
-    chart_buffer = create_chart(counts)
-    story.append(RLImage(chart_buffer, width=145*mm, height=82*mm, kind="proportional"))
+    section("5. Image quality assessment")
+    qa = a["image_quality"]
+    table([["Measurement", "Value"], ["Resolution", f"{qa['width']} x {qa['height']}"],
+           ["Blur indicator", qa["blur_score"]], ["Brightness", qa["brightness"]],
+           ["Contrast", qa["contrast"]], ["Noise estimate", qa["noise_score"]],
+           ["Quality status", qa["status"]]], [70 * mm, 100 * mm], header=True)
+    for w in qa["warnings"]:
+        para("Warning: " + w, "SmallReport")
 
-    section("7. AUTOMATED DETECTION CONCLUSION")
-    conclusion = generate_conclusion(analysis)
-    conclusion_rows = [["Interpretation status", conclusion["status"]]]
-    for finding in conclusion["findings"]:
-        conclusion_rows.append(["Finding", Paragraph(finding.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), styles["ReportSmallCustom"])])
-    for recommendation in conclusion["recommendations"]:
-        conclusion_rows.append(["Recommendation", Paragraph(recommendation.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), styles["ReportSmallCustom"])])
-    conclusion_table = Table(conclusion_rows, colWidths=[38*mm, 132*mm], hAlign="LEFT")
-    conclusion_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EAF2F8")),
-        ("GRID", (0, 0), (-1, -1), .45, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("PADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story.append(conclusion_table)
+    section("6. QAPS preprocessing details")
+    pp = a["preprocessing"]
+    para("Selected operations: " + ", ".join(pp["selected_operations"]))
+    para("Parameters: " + json.dumps(pp["parameters"]))
+    para("Thresholds: " + json.dumps(pp["thresholds"]))
+    para(f"QAPS processing time: {pp['processing_time']:.5f} seconds")
 
-    section("8. LABORATORY REVIEW")
-    review_rows = [
-        ["Reviewer name", "________________________________________"],
-        ["Signature", "________________________________________"],
-        ["Review date", "________________________________________"],
-        ["Comments", "________________________________________\n________________________________________"],
-    ]
-    review_table = Table(review_rows, colWidths=[42*mm, 128*mm], hAlign="LEFT")
-    review_table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), .45, colors.HexColor("#CBD5E1")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("PADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story.append(review_table)
+    section("7. Experimental conclusion")
+    concl = generate_conclusion(a)
+    para(concl["status"], "Heading3")
+    for item in concl["findings"] + concl["recommendations"]:
+        para("- " + item, "SmallReport")
 
-    section("IMPORTANT MEDICAL DISCLAIMER")
-    para(
-        "This report was generated by an AI-based research and educational prototype. "
-        "Counts represent model detections in the uploaded image, not validated blood-cell "
-        "concentrations or a complete blood count. Image-quality checks are heuristic. "
-        "These results must not be used alone for diagnosis, treatment, or clinical decision-making. "
-        "Review by a qualified laboratory professional and appropriate validation are required "
-        "before any clinical use.",
-        "ReportSmallCustom"
-    )
+    section("8. Laboratory review")
+    line = "_" * 32
+    table([["Reviewer", line], ["Signature", line], ["Review date", line], ["Comments", line]],
+           [45 * mm, 125 * mm])
+
+    section("Important research disclaimer")
+    para("This application is an AI-based research prototype. Detection counts represent "
+         "model outputs in an image, not validated blood-cell concentrations or a complete "
+         "blood count. Increased detections or confidence do not establish improved accuracy. "
+         "Ground-truth annotations and quantitative validation are required. This report must "
+         "not be used independently for diagnosis, treatment or clinical decisions.",
+         "SmallReport")
+
     doc.build(story)
-    return pdf_buffer.getvalue()
+    return buffer.getvalue()
 
 
 # =========================================================
-# HEADER
+# UI
 # =========================================================
+
 st.title("🧬 HemoScan AI")
-st.subheader("Blood Smear Image Analyzer")
-st.write(
-    "Blood smear image analysis using YOLO-based cell detection, "
-    "image-quality indicators, confidence summaries, and downloadable reports."
-)
-st.warning(
-    "Research use only. This tool counts model detections in an uploaded image. "
-    "It is not a validated CBC test and must not be used alone for diagnosis "
-    "or treatment decisions."
-)
+st.subheader("Quality-Aware Blood Smear Image Analyzer")
 
-# =========================================================
-# UPLOAD + RUN
-# =========================================================
-st.header("1. Upload specimen image")
-left, right = st.columns([1.05, 0.95], gap="large")
+with st.sidebar:
+    st.header("About")
+    st.write("Research prototype for blood-cell detection and paired "
+             "baseline vs QAPS-YOLO comparison.")
+    st.caption(f"Model: {MODEL_PATH.name}")
+    st.caption(f"Confidence: {YOLO_CONFIG['confidence']}")
+    st.caption(f"IoU: {YOLO_CONFIG['iou']}")
+    st.divider()
+    st.header("How to use")
+    st.markdown("1. Upload a blood smear image\n"
+                "2. Click **Run experiment**\n"
+                "3. Review counts and quality\n"
+                "4. Download PDF/CSV/PNG")
+    st.warning("Research use only. Not for clinical diagnosis.")
+st.write("A research-oriented blood-cell detection system integrating Quality-Aware "
+         "Preprocessing Selection (QAPS) with an existing YOLO object detection model.")
+st.warning("Research use only. Model outputs are not validated clinical blood counts "
+           "or diagnostic results. Not for clinical diagnosis or treatment decisions.")
 
-with left:
-    sample_id = st.text_input(
-        "Sample ID (optional)",
-        placeholder="e.g. SAMPLE-001",
-        max_chars=80,
-    )
-    uploaded_file = st.file_uploader(
-        "Choose a blood smear image",
-        type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"],
-        help="Maximum file size: 15 MB. Use a clear microscopy image.",
-    )
+tab_single, tab_batch = st.tabs(["Single image", "Batch experiment"])
 
-    if uploaded_file is not None:
-        if uploaded_file.size > MAX_UPLOAD_SIZE:
-            st.error("Image is too large. Maximum upload size is 15 MB.")
-            uploaded_file = None
-        else:
-            st.image(
-                uploaded_file,
-                caption="Uploaded image preview",
-                use_container_width=True,
-            )
+# ---------------------------------------------------------
+# Single image
+# ---------------------------------------------------------
+with tab_single:
+    st.header("1. Upload specimen image")
+    left, right = st.columns([1.05, 0.95])
 
-    run_analysis = st.button(
-        "Run cell detection",
-        type="primary",
-        use_container_width=True,
-        disabled=uploaded_file is None,
-    )
-
-with right:
-    st.subheader("Analysis workflow")
-    st.markdown(
-        """
-        1. **Image validation** — Decode the image and check basic technical quality.
-        2. **YOLO inference** — Detect Platelets, RBC, and WBC classes.
-        3. **Results and report** — Review the annotated image, counts, confidence,
-           quality checks, and downloadable PDF.
-        """
-    )
-    st.caption("Model: runs/detect/train/weights/best.pt")
-    st.caption("Maximum upload size: 15 MB")
-
-if run_analysis and uploaded_file is not None:
-    try:
-        raw_bytes = uploaded_file.getvalue()
-        if not raw_bytes:
-            st.error("The uploaded file is empty.")
-        else:
-            encoded = np.frombuffer(raw_bytes, np.uint8)
-            image_bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-
-            if image_bgr is None or image_bgr.size == 0:
-                st.error("Invalid or unsupported image. Please upload a valid image.")
+    with left:
+        sample_id = st.text_input("Sample ID (optional)", placeholder="SAMPLE-001", max_chars=80,
+                                  help="Optional label for the specimen.")
+        uploaded = st.file_uploader(
+            "Upload blood smear image",
+            type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"],
+            help="Supported: PNG, JPG, BMP, TIFF, WEBP (max 15 MB).",
+        )
+        valid = uploaded is not None and uploaded.size <= MAX_UPLOAD_SIZE
+        current_hash = None
+        if uploaded is not None:
+            if not valid:
+                st.error("Maximum upload size is 15 MB.")
             else:
-                with st.spinner("Loading model and analyzing image..."):
-                    yolo_model = load_model(str(MODEL_PATH))
-                    result_data = analyze_image(yolo_model, image_bgr, sample_id)
-                    st.session_state["hemoscan_latest"] = result_data
-                    st.session_state["hemoscan_pdf"] = generate_pdf(result_data)
+                st.image(uploaded, caption="Original specimen", use_container_width=True)
+                current_hash = sha256_bytes(uploaded.getvalue())
+                try:
+                    _q = core.assess_image_quality(decode_image(uploaded.getvalue()))
+                    st.caption("Quality preview")
+                    qcols = st.columns(4)
+                    qcols[0].metric("Blur", _q["blur_score"])
+                    qcols[1].metric("Brightness", _q["brightness"])
+                    qcols[2].metric("Contrast", _q["contrast"])
+                    qcols[3].metric("Noise", _q["noise_score"])
+                    if _q["warnings"]:
+                        for w in _q["warnings"]:
+                            st.warning(w)
+                except Exception:
+                    pass
+        run_clicked = st.button("Run Baseline + QAPS-YOLO Experiment", type="primary",
+                                use_container_width=True, disabled=not valid)
 
-                st.success("Analysis completed. Review the model-generated results below.")
+    with right:
+        st.subheader("Experimental workflow")
+        st.markdown("1. Image quality assessment\n"
+                    "2. Baseline YOLO detection\n"
+                    "3. Adaptive QAPS preprocessing\n"
+                    "4. QAPS-YOLO detection\n"
+                    "5. Comparative evaluation\n"
+                    "6. Research report generation")
+        st.caption(f"Model: {MODEL_PATH.name}")
+        st.caption(f"YOLO config: {YOLO_CONFIG}")
 
-    except FileNotFoundError as exc:
-        st.error(str(exc))
-    except Exception as exc:
-        logger.exception("Image analysis failed")
-        st.error(
-            "Image analysis failed. Check that the model file and dependencies are correct."
-        )
-        with st.expander("Technical error details"):
-            st.code(str(exc))
-
-# =========================================================
-# RESULTS
-# =========================================================
-analysis = st.session_state.get("hemoscan_latest")
-
-if analysis:
-    st.divider()
-    st.header("2. Detection overview")
-
-    counts = analysis["counts"]
-    metric_items = [
-        ("Total detections", analysis["total_detections"], "All supported classes"),
-        ("Red blood cells", counts.get("RBC", 0), "RBC detections"),
-        ("White blood cells", counts.get("WBC", 0), "WBC detections"),
-        ("Platelets", counts.get("Platelets", 0), "Platelet detections"),
-        ("Mean confidence", f'{analysis["mean_confidence"]:.1f}%', "Not diagnostic accuracy"),
-    ]
-
-    metric_columns = st.columns(5)
-    for column, (label, value, help_text) in zip(metric_columns, metric_items):
-        with column:
-            st.metric(label, value, help=help_text)
-
-    st.divider()
-    st.header("3. Annotated image and image quality")
-
-    image_col, quality_col = st.columns([1.25, 0.75], gap="large")
-
-    with image_col:
-        st.subheader("Annotated detection image")
-        st.image(
-            analysis["processed_rgb"],
-            caption="Model-generated cell detections",
-            use_container_width=True,
-        )
-
-        image_bytes = BytesIO()
-        plt.imsave(image_bytes, analysis["processed_rgb"], format="png")
-        st.download_button(
-            "Download annotated image",
-            data=image_bytes.getvalue(),
-            file_name=f'hemoscan_{analysis["analysis_id"]}.png',
-            mime="image/png",
-        )
-
-    with quality_col:
-        st.subheader("Image quality review")
-        quality = analysis["image_quality"]
-
-        st.metric("Quality indicator", quality["status"])
-        st.write(f'**Dimensions:** {quality["width"]} × {quality["height"]} pixels')
-        st.write(f'**Blur indicator:** {quality["blur_score"]}')
-        st.write(f'**Brightness:** {quality["brightness"]}')
-        st.write(f'**Contrast:** {quality["contrast"]}')
-
-        if quality["warnings"]:
-            st.warning("Image-quality warnings")
-            for warning in quality["warnings"]:
-                st.write(f"- {warning}")
-        else:
-            st.info(
-                "No warnings were triggered by the configured basic checks. "
-                "This does not establish clinical quality."
-            )
-
-    st.divider()
-    st.header("4. Cell distribution")
-
-    chart_col, table_col = st.columns([1, 1], gap="large")
-
-    with chart_col:
-        fig, ax = plt.subplots(figsize=(7, 3.5))
-        names = ["RBC", "WBC", "Platelets"]
-        values = [counts.get(name, 0) for name in names]
-        chart_colors = [
-            np.array(COLORS[name][::-1]) / 255.0
-            for name in names
-        ]
-
-        bars = ax.bar(
-            names,
-            values,
-            color=chart_colors,
-            edgecolor="white",
-            linewidth=0.8,
-        )
-        ax.set_ylabel("Detections")
-        ax.grid(axis="y", linestyle="--", alpha=0.25)
-        ax.set_axisbelow(True)
-
-        for bar, value in zip(bars, values):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height(),
-                str(value),
-                ha="center",
-                va="bottom",
-            )
-
-        fig.tight_layout()
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
-
-    with table_col:
-        detection_total = analysis["total_detections"]
-        st.dataframe(
-            [
-                {
-                    "Cell class": name,
-                    "Detections": counts.get(name, 0),
-                    "Share": (
-                        f'{counts.get(name, 0) / detection_total * 100:.1f}%'
-                        if detection_total
-                        else "0.0%"
-                    ),
+    if run_clicked and valid:
+        try:
+            raw = uploaded.getvalue()
+            image = decode_image(raw)
+            with st.status("Running experiment...", expanded=True) as status:
+                status.write("Loading model...")
+                model = load_model(str(MODEL_PATH))
+                mhash = model_sha256(str(MODEL_PATH), MODEL_PATH.stat().st_mtime)
+                status.write("Running baseline + QAPS-YOLO...")
+                result = analyze_image(model, image, sample_id, sha256_bytes(raw), mhash)
+                status.write("Building chart and report...")
+                chart_png = create_distribution_chart(result)
+                annotated_png = to_png(result["processed_rgb"])
+                st.session_state["hs"] = {
+                    "result": result,
+                    "chart": chart_png,
+                    "annotated": annotated_png,
+                    "conclusion": generate_conclusion(result),
+                    "pdf": generate_pdf(result, chart_png, annotated_png),
+                    "csv": rows_to_csv(csv_rows(result)),
                 }
-                for name in ("RBC", "WBC", "Platelets")
-            ],
-            hide_index=True,
-            use_container_width=True,
-        )
+                status.update(label="Experiment completed", state="complete")
+            st.toast("Analysis finished successfully")
+            try:
+                import json as _json
+                with (BASE_DIR / "audit_log.jsonl").open("a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps({
+                        "timestamp": result["timestamp"],
+                        "sample_id": result["sample_id"],
+                        "image_hash": result["image_hash"],
+                        "model_hash": result["model_hash"],
+                    }) + "\n")
+            except Exception:
+                pass
+        except (FileNotFoundError, ValueError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            logger.exception("Analysis failed")
+            st.error("Analysis failed.")
+            with st.expander("Technical error details"):
+                st.code(str(exc))
 
-        st.subheader("Analysis details")
-        st.write(f'**Analysis ID:** `{analysis["analysis_id"]}`')
-        st.write(f'**Sample ID:** {analysis["sample_id"]}')
-        st.write(f'**Analyzed:** {analysis["timestamp"]}')
-        st.write(f'**Review status:** {analysis["review_status"]}')
+    state = st.session_state.get("hs")
+    if state and current_hash and state["result"]["image_hash"] == current_hash:
+        a = state["result"]
+        base, qaps, cmp_ = a["baseline"], a["qaps"], a["comparison"]
+        pp, qa = a["preprocessing"], a["image_quality"]
 
-    st.divider()
-    st.header("5. Automated detection conclusion")
+        st.divider()
+        st.header("2. Detection overview")
+        for col, (label, value) in zip(st.columns(5), [
+            ("QAPS total", qaps["total_detections"]), ("RBC", qaps["counts"]["RBC"]),
+            ("WBC", qaps["counts"]["WBC"]), ("Platelets", qaps["counts"]["Platelets"]),
+            ("Mean confidence", f"{qaps['mean_confidence']:.1f}%"),
+        ]):
+            col.metric(label, value)
 
-    conclusion = generate_conclusion(analysis)
-    st.info(conclusion["status"])
+        st.divider()
+        st.header("3. Baseline vs QAPS-YOLO comparison")
+        st.caption("Both branches use the same model and identical inference settings.")
+        c1, c2 = st.columns(2)
+        for col, title, r, cap in [
+            (c1, "Baseline YOLO", base, "Detection on original image"),
+            (c2, "Proposed QAPS-YOLO", qaps, "Detection on QAPS-preprocessed image"),
+        ]:
+            with col:
+                st.subheader(title)
+                st.metric("Total detections", r["total_detections"])
+                st.metric("Mean confidence", f"{r['mean_confidence']:.2f}%")
+                st.metric("Inference time", f"{r['inference_time']:.5f} s")
+                st.image(r["annotated_rgb"], caption=cap, use_container_width=True)
 
-    st.subheader("Findings")
-    for finding in conclusion["findings"]:
-        st.write(f"- {finding}")
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Detection count difference", f"{cmp_['detection_change']:+d}")
+        d2.metric("Confidence difference", f"{cmp_['confidence_change']:+.2f} pp")
+        d3.metric("QAPS processing time", f"{pp['processing_time']:.5f} s")
+        st.caption("Descriptive differences only, not accuracy improvements.")
 
-    st.subheader("Recommendations")
-    for recommendation in conclusion["recommendations"]:
-        st.write(f"- {recommendation}")
+        st.subheader("Class-wise detection comparison")
+        st.dataframe(pd.DataFrame([
+            {"Cell class": n, "Baseline": v["baseline"], "QAPS-YOLO": v["qaps"],
+             "Difference": v["difference"]}
+            for n, v in cmp_["class_comparison"].items()
+        ]), hide_index=True, use_container_width=True,
+           column_config={
+               "Difference": st.column_config.NumberColumn("Difference", format="%+d"),
+               "Baseline": st.column_config.NumberColumn("Baseline"),
+               "QAPS-YOLO": st.column_config.NumberColumn("QAPS-YOLO"),
+           })
 
-    st.divider()
-    st.header("6. Download report")
+        st.divider()
+        st.header("4. QAPS adaptive preprocessing")
+        st.write(f"**Version:** {pp['algorithm_version']}")
+        st.write("**Selected operations:** " + ", ".join(pp["selected_operations"]))
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Noise", pp["noise_score"])
+        m2.metric("Brightness", pp["original_brightness"])
+        m3.metric("Contrast", pp["original_contrast"])
+        o, e = st.columns(2)
+        with o:
+            st.subheader("Original image")
+            st.image(a["original_rgb"], use_container_width=True)
+        with e:
+            st.subheader("QAPS preprocessed image")
+            st.image(a["preprocessed_rgb"], use_container_width=True)
+        with st.expander("View algorithm parameters"):
+            st.json(pp["parameters"])
+            st.json(pp["thresholds"])
 
-    pdf_bytes = st.session_state.get("hemoscan_pdf")
-    if pdf_bytes:
-        st.download_button(
-            "Download laboratory-style PDF report",
-            data=pdf_bytes,
-            file_name=f'hemoscan_report_{analysis["analysis_id"]}.pdf',
-            mime="application/pdf",
-            type="primary",
-            use_container_width=True,
-        )
+        st.divider()
+        st.header("5. Image quality assessment")
+        for col, (label, key) in zip(st.columns(4), [
+            ("Blur indicator", "blur_score"), ("Brightness", "brightness"),
+            ("Contrast", "contrast"), ("Noise", "noise_score"),
+        ]):
+            col.metric(label, qa[key])
+        st.write(f"**Resolution:** {qa['width']} × {qa['height']}")
+        st.write(f"**Quality status:** {qa['status']}")
+        if qa["warnings"]:
+            for w in qa["warnings"]:
+                st.warning(w)
+        else:
+            st.info("No configured quality warnings were triggered.")
+
+        st.divider()
+        st.header("6. Cell distribution")
+        st.image(state["chart"], use_container_width=True)
+
+
+
+        st.divider()
+        st.header("7. Experimental conclusion")
+        concl = state["conclusion"]
+        st.info(concl["status"])
+        st.subheader("Findings")
+        for f in concl["findings"]:
+            st.write("- " + f)
+        st.subheader("Recommendations")
+        for r in concl["recommendations"]:
+            st.write("- " + r)
+
+        st.divider()
+        st.header("8. Download research results")
+        x1, x2, x3 = st.columns(3)
+        x1.download_button("Download PDF report", state["pdf"],
+                           file_name=f"hemoscan_{a['analysis_id']}.pdf",
+                           mime="application/pdf", type="primary", use_container_width=True)
+        x2.download_button("Download experiment CSV", state["csv"],
+                           file_name=f"hemoscan_experiment_{a['analysis_id']}.csv",
+                           mime="text/csv", use_container_width=True)
+        x3.download_button("Download annotated image", state["annotated"],
+                           file_name=f"hemoscan_{a['analysis_id']}.png",
+                           mime="image/png", use_container_width=True)
+
+        with st.expander("Research experiment metadata"):
+            st.write("**Analysis ID:**", a["analysis_id"])
+            st.write("**Sample ID:**", a["sample_id"])
+            st.write("**Timestamp:**", a["timestamp"])
+            st.write("**Image SHA-256:**", a["image_hash"])
+            st.write("**Model SHA-256:**", a["model_hash"])
+            st.json(a["yolo_config"])
+            st.write("**Total analysis time:**", f"{a['analysis_time']:.5f} seconds")
+
+# ---------------------------------------------------------
+# Batch experiment
+# ---------------------------------------------------------
+with tab_batch:
+    st.header("Batch experiment")
+    st.caption("Runs baseline and QAPS-YOLO on many images and exports one aggregate CSV "
+               "(one row per image per branch per class).")
+
+    files = st.file_uploader(
+        "Upload multiple blood smear images",
+        type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"],
+        accept_multiple_files=True,
+        key="batch_files",
+    )
+
+    if st.button("Run batch experiment", type="primary", disabled=not files):
+        try:
+            model = load_model(str(MODEL_PATH))
+            mhash = model_sha256(str(MODEL_PATH), MODEL_PATH.stat().st_mtime)
+            all_rows, summary, skipped = [], [], []
+            bar = st.progress(0.0)
+            status = st.status("Processing batch...", expanded=True)
+
+            for i, f in enumerate(files, 1):
+                status.write(f"{i}/{len(files)}: {f.name}")
+                try:
+                    if f.size > MAX_UPLOAD_SIZE:
+                        raise ValueError("file larger than 15 MB")
+                    raw = f.getvalue()
+                    res = analyze_image(model, core.decode_image(raw), Path(f.name).stem,
+                                        sha256_bytes(raw), mhash, draw=False)
+                    all_rows += csv_rows(res)
+                    summary.append({
+                        "Image": f.name,
+                        "Quality warnings": len(res["image_quality"]["warnings"]),
+                        "QAPS operations": ", ".join(res["preprocessing"]["selected_operations"]),
+                        "Baseline total": res["baseline"]["total_detections"],
+                        "QAPS total": res["qaps"]["total_detections"],
+                        "Count diff": res["comparison"]["detection_change"],
+                        "Conf diff (pp)": res["comparison"]["confidence_change"],
+                    })
+                except Exception as exc:
+                    skipped.append(f"{f.name}: {exc}")
+                bar.progress(i / len(files))
+
+            status.update(label="Batch complete", state="complete")
+            st.session_state["hs_batch"] = {
+                "summary": pd.DataFrame(summary),
+                "csv": rows_to_csv(all_rows) if all_rows else b"",
+                "skipped": skipped,
+            }
+            st.toast("Batch experiment finished")
+        except (FileNotFoundError, ValueError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            logger.exception("Batch failed")
+            st.error(f"Batch failed: {exc}")
+
+    batch = st.session_state.get("hs_batch")
+    if batch:
+        for msg in batch["skipped"]:
+            st.warning("Skipped " + msg)
+        df = batch["summary"]
+        if not df.empty:
+            st.dataframe(df, hide_index=True, use_container_width=True)
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Images analysed", len(df))
+            s2.metric("Mean count difference", f"{df['Count diff'].mean():+.2f}")
+            s3.metric("Mean confidence difference", f"{df['Conf diff (pp)'].mean():+.2f} pp")
+            st.caption("Counts and confidence are not accuracy. Evaluate against ground "
+                       "truth (precision, recall, F1, mAP) before drawing conclusions.")
+            st.download_button("Download aggregate CSV", batch["csv"],
+                               file_name="hemoscan_batch.csv", mime="text/csv",
+                               type="primary")
 
 st.divider()
-st.caption(
-    "HemoScan AI • AI-assisted blood smear research prototype • Human review required"
-)
+st.caption("HemoScan AI | QAPS-YOLO Research Prototype | Paired baseline comparison | "
+           "Human review required | Not for clinical diagnosis")

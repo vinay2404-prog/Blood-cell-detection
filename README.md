@@ -1,45 +1,36 @@
-# How I Built an 🤖 YOLO11 - AI Blood Cell Detection System 🩸 | Automated Lab Reports Machine Learning
+# HemoScan AI - Blood Smear Research Analyzer
 
-<img width="1919" height="1079" alt="Screenshot 2025-12-13 184629" src="https://github.com/user-attachments/assets/5433b40d-8f94-4ba5-a21a-288a05c5adba" />
+Research-oriented Streamlit application that detects and counts RBCs, WBCs and
+platelets in blood-smear images using a YOLO model, with an optional
+Quality-Aware Preprocessing Selection (QAPS) branch for paired comparison.
 
+> **Not a diagnostic tool.** Outputs are model detections, not validated
+> blood-cell concentrations or a complete blood count. Do not use for clinical
+> decisions.
 
-💡 Ever wondered if Artificial Intelligence can assist doctors in analyzing blood tests?
-In this video, I’ll show you how I built a YOLO-powered AI Blood Cell Detection System that automatically detects and counts RBCs, WBCs, and Platelets from blood smear images — and even generates a professional lab-style PDF report 🩸🤖
+## Run
 
-This project demonstrates how Computer Vision + Deep Learning (YOLO) can be used in real-world healthcare applications to reduce manual effort and improve accuracy.
+```bash
+pip install -r requirements.txt
+streamlit run main.py
+```
 
-YouTube Link:   https://youtu.be/N3wzkmMhkoc?si=41GlM5SqxrFqSrdS
+## Project layout
 
-🚀 What you’ll see in this video (Step-by-Step):
+- `app.py` - Streamlit UI
+- `main.py` - launcher that applies the shadcn skin
+- `core.py` - shared logic (quality, QAPS, inference, exports)
+- `train.py` - model training
+- `evaluate_dataset.py` - offline paired evaluation against ground truth
+- `paired_analysis.py`, `statistical_analysis.py` - paired/bootstrap statistics
+- `tools/` - utility scripts (threshold tuning, verification, inspection)
+- `tests/` - unit tests
 
-✅ Upload blood smear images using a modern web interface
-✅ Detect RBC, WBC & Platelets using a trained YOLO object detection model
-✅ Draw bounding boxes with confidence scores on the image
-✅ Display real-time cell counts on a dashboard
-✅ Generate charts & statistics automatically
-✅ Create a professional PDF lab report with:
+## Limitations
 
-Processed image
-Cell count summary
-Distribution graphs
-Timestamp & AI disclaimer
-
-🧠 By the end of this video, you’ll learn how to:
-
-🔹 Train and deploy a YOLO model for medical image analysis
-🔹 Integrate AI with a Flask web application
-🔹 Build a modern healthcare dashboard UI
-🔹 Generate automated medical reports using Python
-🔹 Combine Deep Learning, Web Development & Data Visualization into one complete system
-
-🛠 Technologies Used:
-
-Python, YOLO, Flask, OpenCV, NumPy, Matplotlib, ReportLab, HTML, CSS, JavaScript
-
-💬 If you’re a beginner or intermediate AI/ML learner, this project will help you understand how to convert a research-level idea into a real-world healthcare application.
-
-🔔 Subscribe for more AI, Machine Learning & Computer Vision projects:
-👉 @SouvikChai
-
-📢 Share this video with friends who are interested in Data Science, Computer Vision & Healthcare AI!
-Transcript
+- Counts are detections per image, not calibrated to volume.
+- Model trained on a limited dataset; precision is modest (~0.6) with
+  over-detection of RBCs/platelets.
+- QAPS has not shown a statistically significant accuracy improvement.
+- Small/unbalanced test set; metrics are unstable for rare classes.
+- Not validated for clinical use.
