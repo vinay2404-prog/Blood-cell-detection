@@ -3,12 +3,12 @@ from pathlib import Path
 import torch
 from ultralytics import YOLO
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 DATA_YAML = BASE_DIR / "data.yaml"
 
-model = YOLO("yolo11n.pt")
+model = YOLO(str(BASE_DIR / "models" / "yolo11n.pt"))
 
 model.train(
     data=str(DATA_YAML),

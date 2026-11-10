@@ -17,6 +17,10 @@ import torch
 
 from ultralytics import YOLO
 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 from core import (
     CLASS_NAMES as CORE_CLASS_NAMES,
     MODEL_PATH as CORE_MODEL_PATH,
@@ -36,10 +40,6 @@ THRESHOLDS = CORE_THRESHOLDS
 # =========================================================
 # 1. CONFIGURATION
 # =========================================================
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
 
 MODEL_PATH = (
     BASE_DIR

@@ -21,7 +21,5 @@ _real_set_page_config(
 # app.py calls set_page_config again, which would raise; make it a no-op.
 st.set_page_config = lambda *args, **kwargs: None
 
-css = (BASE_DIR / "shadcn.css").read_text(encoding="utf-8")
-st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-
+# shadcn skin removed; run app.py directly.
 runpy.run_path(str(BASE_DIR / "app.py"), run_name="__main__")
